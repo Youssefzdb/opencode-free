@@ -272,7 +272,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     }
     if (changed) opts.onEvent({ type: "files", files: { ...files } });
     if (finished !== null) return { files, summary: finished, changed };
-    convo.push({ role: "user", content: `Tool results:\n\n${results.join("\n\n")}\n\nContinue: reply with plain-text action tags (finish when done). });
+    convo.push({ role: "user", content: `Action results:\n\n${results.join("\n\n")}\n\nContinue: reply with plain-text action tags (finish when done).` });
   }
   const problems = checkProject(files);
   if (!changed) throw new Error("لم ينفّذ الوكيل أي تعديل على الملفات؛ أعد المحاولة.");
