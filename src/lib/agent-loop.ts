@@ -44,17 +44,17 @@ Each reply: one short sentence describing what you do next (user's language), th
 <action name="read_file" path="src/components/Navbar.tsx"/>
 <action name="write_file" path="src/components/Navbar.tsx">
 FULL FILE CONTENT
-</tool>
+</action>
 <action name="edit_file" path="src/App.tsx">
 <<<<<<< SEARCH
 exact existing lines
 =======
 replacement lines
 >>>>>>> REPLACE
-</tool>
+</action>
 <action name="delete_file" path="src/old.tsx"/>
 <action name="check_project"/>
-<action name="finish">1-3 sentence summary for the user</tool>
+<action name="finish">1-3 sentence summary for the user</action>
 
 Rules:
 - You will receive real tool results after each reply. Read files before editing ones you have not seen. Prefer edit_file for small changes to existing files.
@@ -66,7 +66,7 @@ Rules:
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const TAG_RE =
-  /<tool\s+name="([\w-]+)"((?:\s+[\w-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/tool>)/g;
+  /<(tool|action)\s+name="([\w-]+)"((?:\s+[\w-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/g;
 
 export function parseToolCalls(content: string): {
   thought: string;
@@ -75,8 +75,8 @@ export function parseToolCalls(content: string): {
   const calls: Array<{ name: string; args: Record<string, string>; body: string }> = [];
   for (const m of content.matchAll(TAG_RE)) {
     const args: Record<string, string> = {};
-    for (const a of (m[2] ?? "").matchAll(/([\w-]+)="([^"]*)"/g)) args[a[1]!] = a[2]!;
-    calls.push({ name: m[1]!, args, body: (m[3] ?? "").replace(/^\n/, "").replace(/\n$/, "") });
+    for (const a of (m[3] ?? "").matchAll(/([\w-]+)="([^"]*)"/g)) args[a[1]!] = a[2]!;
+    calls.push({ name: m[2]!, args, body: (m[4] ?? "").replace(/^\n/, "").replace(/\n$/, "") });
   }
   let thought = content.replace(TAG_RE, "").trim();
   // Fallback: a model that answers with fenced files instead of tags still gets real writes.
@@ -167,7 +167,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     convo.push({
       role: "assistant",
       content: (res.content || "").replace(
-        /(<tool\s+name="write_file"[^>]*>)([\s\S]*?)(<\/tool>)/g,
+        /(<(?:tool|action)\s+name="write_file"[^>]*>)([\s\S]*?)(<\/(?:tool|action)>)/g,
         (_m, a: string, body: string, c: string) => `${a}[${body.split("\n").length} lines written]${c}`,
       ),
     });
