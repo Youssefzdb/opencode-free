@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
-import { Tool, ToolHeader, ToolContent } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import JSZip from "jszip";
 import {
@@ -874,40 +873,44 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 function ToolCallCard({ call }: { call: ToolCall }) {
-  const state =
-    call.status === "running"
-      ? "input-available"
-      : call.status === "done"
-        ? "output-available"
-        : "output-error";
+  const [open, setOpen] = useState(false);
   const target = call.args["path"] ?? "";
   return (
-    <Tool defaultOpen={false} className="mb-0 bg-card">
-      <ToolHeader
-        type="dynamic-tool"
-        toolName={call.name}
-        title={`${TOOL_LABELS[call.name] ?? call.name}${target ? ` · ${target}` : ""}`}
-        state={state}
-        className="[&_span]:text-[10px]"
-      />
-      <ToolContent className="space-y-2 p-3 text-xs">
-        <p className="font-mono text-[10px] text-muted-foreground" dir="ltr">
-          {call.name}({target ? `"${target}"` : ""})
-          {call.durationMs !== undefined ? ` · ${call.durationMs.toFixed(0)}ms` : ""}
-        </p>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger
+        className={cn(
+          "flex w-full items-center gap-2 py-0.5 text-start text-xs text-muted-foreground hover:text-foreground",
+          call.status === "error" && "text-destructive",
+        )}
+      >
+        {call.status === "running" ? (
+          <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
+        ) : call.status === "error" ? (
+          <TriangleAlert className="size-3 shrink-0" />
+        ) : (
+          <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
+        )}
+        <span className="font-medium">{TOOL_LABELS[call.name] ?? call.name}</span>
+        {target && (
+          <span className="truncate font-mono text-[10.5px]" dir="ltr">
+            {target}
+          </span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
         {call.output && (
           <pre
             dir="ltr"
             className={cn(
-              "max-h-56 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[10.5px]",
+              "mt-1 max-h-56 overflow-auto whitespace-pre-wrap ps-4 font-mono text-[10.5px] text-muted-foreground",
               call.status === "error" && "text-destructive",
             )}
           >
             {call.output}
           </pre>
         )}
-      </ToolContent>
-    </Tool>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
