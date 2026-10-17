@@ -1,0 +1,192 @@
+{
+  "tested_at": "2026-10-17T17:40:17.762Z",
+  "tested": 44,
+  "results": [
+    {
+      "model": "cat-jam-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "beam-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "space-bunny-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "deepseek-v4.1-flash-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "mimo-v2.6-flash-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "exo-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "glm-5.3-flash-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "longcat-2.5-preview-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "big-pickle",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "nemotron-3.5-super-vl-free",
+      "ok": true,
+      "content": "hello"
+    },
+    {
+      "model": "ling-3.1-flash-free",
+      "ok": false
+    },
+    {
+      "model": "glm-5-free",
+      "ok": false
+    },
+    {
+      "model": "trinity-large-preview-free",
+      "ok": false
+    },
+    {
+      "model": "laguna-s-2.1-free",
+      "ok": false
+    },
+    {
+      "model": "minimax-m3-free",
+      "ok": false
+    },
+    {
+      "model": "minimax-m2.5-free",
+      "ok": false
+    },
+    {
+      "model": "ring-2.6-1t-free",
+      "ok": false
+    },
+    {
+      "model": "longcat-2.0-free",
+      "ok": false
+    },
+    {
+      "model": "hy3-preview-free",
+      "ok": false
+    },
+    {
+      "model": "ll-alpha-free",
+      "ok": false
+    },
+    {
+      "model": "nemotron-3-super-free",
+      "ok": false
+    },
+    {
+      "model": "minimax-m2.1-free",
+      "ok": false
+    },
+    {
+      "model": "grok-code",
+      "ok": false
+    },
+    {
+      "model": "ling-2.6-flash-free",
+      "ok": false
+    },
+    {
+      "model": "deepseek-v4-flash-free",
+      "ok": false
+    },
+    {
+      "model": "hy3-free",
+      "ok": false
+    },
+    {
+      "model": "mimo-v2-omni-free",
+      "ok": false
+    },
+    {
+      "model": "ling-3.0-flash-free",
+      "ok": false
+    },
+    {
+      "model": "north-mini-code-free",
+      "ok": false
+    },
+    {
+      "model": "mimo-v2-flash-free",
+      "ok": false
+    },
+    {
+      "model": "step-5-preview-free",
+      "ok": false
+    },
+    {
+      "model": "x-preview-f-free",
+      "ok": false
+    },
+    {
+      "model": "muse-spark-1.3-contributor-free",
+      "ok": false
+    },
+    {
+      "model": "muse-spark-1.2-contributor-free",
+      "ok": false
+    },
+    {
+      "model": "ling-3.0-tiny-free",
+      "ok": false
+    },
+    {
+      "model": "kimi-k2.5-free",
+      "ok": false
+    },
+    {
+      "model": "glm-4.7-free",
+      "ok": false
+    },
+    {
+      "model": "mimo-v2.5-free",
+      "ok": false
+    },
+    {
+      "model": "ling-3.0-flash-fin-free",
+      "ok": false
+    },
+    {
+      "model": "fledge-alpha-free",
+      "ok": false
+    },
+    {
+      "model": "mimo-v2-pro-free",
+      "ok": false
+    },
+    {
+      "model": "qwen3.6-plus-free",
+      "ok": false
+    },
+    {
+      "model": "nemotron-3-ultra-free",
+      "ok": false
+    },
+    {
+      "model": "nemotron-3.5-lightning-free",
+      "ok": false
+    }
+  ]
+}
