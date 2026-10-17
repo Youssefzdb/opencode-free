@@ -45,7 +45,9 @@ import {
   loadConfirmedModels,
   type ModelInfo,
 } from "@/lib/opencode";
-import { AGENTS, generateWithAgents, type AgentEvent } from "@/lib/agents";
+import type { AgentEvent } from "@/lib/agents";
+import { runAgentLoop, type ToolCall } from "@/lib/agent-loop";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { buildPreviewHtml, buildProjectFiles } from "@/lib/preview";
 import { ENTRY, serializeFiles, totalLines, type ProjectFiles } from "@/lib/files";
 import { FileTree } from "@/components/file-tree";
@@ -90,7 +92,9 @@ type Msg = {
   thinkMs?: number | undefined;
   error?: string | undefined;
   agents?: AgentEvent[] | undefined;
+  timeline?: TimelineItem[] | undefined;
 };
+type TimelineItem = { kind: "thought"; id: string; text: string } | { kind: "tool"; call: ToolCall };
 type Version = { n: number; files: ProjectFiles; prompt: string };
 type Device = "desktop" | "tablet" | "mobile";
 
@@ -121,6 +125,8 @@ function Studio() {
   const [device, setDevice] = useState<Device>("desktop");
   const [reloadKey, setReloadKey] = useState(0);
   const [activeFile, setActiveFile] = useState(ENTRY);
+  const isMobile = useIsMobile();
+  const [pane, setPane] = useState<"chat" | "preview">("chat");
   const abortRef = useRef<AbortController | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -308,44 +314,43 @@ function Studio() {
         id: aid,
         role: "assistant",
         text: "",
-        agents: [],
-        steps: [{ id: "think", kind: "think", label: "تنفيذ الوكلاء", status: "running" }],
+        timeline: [],
+        steps: [{ id: "think", kind: "think", label: "الوكيل يعمل", status: "running" }],
       },
     ]);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     const t0 = performance.now();
     try {
-      const fullPrompt = current
-        ? `${prompt}\n\n(Current project is version v${current.n}. Return only changed or new files, each complete.)`
-        : prompt;
       const history = messages
         .filter((m) => m.role === "user" || (!m.error && m.text))
-        .map((m) => {
-          const v = m.version ? versions.find((x) => x.n === m.version) : undefined;
-          return {
-            role: m.role,
-            content: v ? `${m.text}\n\n(project v${v.n}: ${Object.keys(v.files).length} files)` : m.text,
-          };
-        })
-        .slice(-20);
-      const res = await generateWithAgents({
-        prompt: fullPrompt,
+        .map((m) => ({ role: m.role, content: m.text }))
+        .slice(-12);
+      const res = await runAgentLoop({
+        prompt,
         session,
         model,
         history,
-        currentFiles: current?.files,
+        files: current?.files ?? {},
         signal: ctrl.signal,
-        onEvent: (event) =>
-          patch(aid, (m) => ({
-            ...m,
-            agents: [...(m.agents ?? []).filter((a) => a.id !== event.id), event],
-          })),
+        onEvent: (event) => {
+          if (event.type === "files") return;
+          patch(aid, (m) => {
+            const tl = m.timeline ?? [];
+            if (event.type === "thought")
+              return { ...m, timeline: [...tl, { kind: "thought", id: event.id, text: event.text }] };
+            const i = tl.findIndex((t) => t.kind === "tool" && t.call.id === event.call.id);
+            const item: TimelineItem = { kind: "tool", call: event.call };
+            return {
+              ...m,
+              timeline: i >= 0 ? tl.map((t, j) => (j === i ? item : t)) : [...tl, item],
+            };
+          });
+        },
       });
       const thinkMs = performance.now() - t0;
-      const prose = res.text;
-      const files = res.files;
-      patch(aid, (m) => ({ ...m, text: prose, reasoning: res.reasoning, thinkMs }));
+      const files = res.changed ? res.files : null;
+      patch(aid, (m) => ({ ...m, text: res.summary, thinkMs }));
       setStep(aid, "think", { status: "done", detail: `${(thinkMs / 1000).toFixed(1)}ث` });
       if (files) {
         const n = versions.length + 1;
@@ -369,6 +374,7 @@ function Studio() {
         setVersions((vs) => [...vs, { n, files, prompt }]);
         setActiveV(n);
         setView("preview");
+        setPane("preview");
       }
     } catch (e) {
       const aborted = (e as Error).name === "AbortError";
@@ -377,8 +383,10 @@ function Studio() {
         ...m,
         error: aborted ? "تم إيقاف التوليد." : (e as Error).message,
         steps: m.steps?.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
-        agents: m.agents?.map((a) =>
-          a.status === "running" ? { ...a, status: "error", error: "توقف التنفيذ" } : a,
+        timeline: m.timeline?.map((t) =>
+          t.kind === "tool" && t.call.status === "running"
+            ? { ...t, call: { ...t.call, status: "error", output: "توقف التنفيذ" } }
+            : t,
         ),
       }));
     } finally {
@@ -419,70 +427,7 @@ function Studio() {
     URL.revokeObjectURL(a.href);
   }
 
-  return (
-    <div dir="ltr" className="flex h-screen flex-col bg-background text-foreground">
-      <Toaster />
-      {/* Top bar */}
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-3">
-        <div className="flex items-center gap-2 font-semibold">
-          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-            <Hexagon className="size-4" />
-          </span>
-          <span className="tracking-tight">
-            Vibe<span className="text-primary">Studio</span>
-          </span>
-        </div>
-        <div className="mx-auto flex items-center rounded-lg border border-border bg-muted p-0.5">
-          {(["preview", "code"] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition",
-                view === v
-                  ? "bg-background text-foreground shadow"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {v === "preview" ? <Eye className="size-3.5" /> : <Code2 className="size-3.5" />}
-              {v === "preview" ? "معاينة" : "الكود"}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-1.5">
-          {versions.length > 0 && (
-            <Select value={String(activeV)} onValueChange={(v) => setActiveV(Number(v))}>
-              <SelectTrigger className="h-8 w-[120px] gap-1 text-xs">
-                <History className="size-3.5" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[...versions].reverse().map((v) => (
-                  <SelectItem key={v.n} value={String(v.n)} className="text-xs">
-                    v{v.n}
-                    {v.n === versions.length ? " · الأحدث" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <BridgePanel onLoad={loadFromBridge} />
-          <IconBtn label="نسخ الكود" onClick={copyCode} disabled={!current}>
-            <Copy className="size-4" />
-          </IconBtn>
-          <button
-            onClick={downloadProject}
-            disabled={!current}
-            className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
-          >
-            <Download className="size-3.5" /> تنزيل المشروع
-          </button>
-        </div>
-      </header>
-
-      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-        {/* Chat */}
-        <ResizablePanel defaultSize="25%" minSize="18%" maxSize="55%">
+  const chatPane = (
           <div className="flex h-full flex-col bg-sidebar">
             <div className="flex h-10 items-center justify-between border-b border-border px-3 text-xs text-muted-foreground">
               <span>المحادثة</span>
@@ -602,10 +547,8 @@ function Studio() {
               </div>
             </div>
           </div>
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        {/* Preview / Code */}
-        <ResizablePanel defaultSize="75%" minSize="40%">
+  );
+  const previewPane = (
           <div className="flex h-full flex-col">
             <div className="flex h-10 items-center gap-2 border-b border-border px-3">
               {view === "preview" ? (
@@ -696,8 +639,98 @@ function Studio() {
               )}
             </div>
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+  );
+
+  return (
+    <div dir="ltr" className="flex h-screen flex-col bg-background text-foreground">
+      <Toaster />
+      {/* Top bar */}
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-3">
+        <div className="flex items-center gap-2 font-semibold">
+          <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
+            <Hexagon className="size-4" />
+          </span>
+          <span className="tracking-tight">
+            Vibe<span className="text-primary">Studio</span>
+          </span>
+        </div>
+        <div className="mx-auto flex items-center rounded-lg border border-border bg-muted p-0.5">
+          {(["preview", "code"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition",
+                view === v
+                  ? "bg-background text-foreground shadow"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {v === "preview" ? <Eye className="size-3.5" /> : <Code2 className="size-3.5" />}
+              {v === "preview" ? "معاينة" : "الكود"}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {versions.length > 0 && (
+            <Select value={String(activeV)} onValueChange={(v) => setActiveV(Number(v))}>
+              <SelectTrigger className="h-8 w-[120px] gap-1 text-xs">
+                <History className="size-3.5" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[...versions].reverse().map((v) => (
+                  <SelectItem key={v.n} value={String(v.n)} className="text-xs">
+                    v{v.n}
+                    {v.n === versions.length ? " · الأحدث" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <BridgePanel onLoad={loadFromBridge} />
+          <IconBtn label="نسخ الكود" onClick={copyCode} disabled={!current}>
+            <Copy className="size-4" />
+          </IconBtn>
+          <button
+            onClick={downloadProject}
+            disabled={!current}
+            className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
+          >
+            <Download className="size-3.5" /> تنزيل المشروع
+          </button>
+        </div>
+      </header>
+
+      {isMobile ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="grid shrink-0 grid-cols-2 border-b border-border text-xs" dir="rtl">
+            {(["chat", "preview"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPane(p)}
+                className={cn(
+                  "py-2 font-medium",
+                  pane === p ? "border-b-2 border-primary text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {p === "chat" ? "المحادثة" : view === "code" ? "الكود" : "المعاينة"}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1">{pane === "chat" ? chatPane : previewPane}</div>
+        </div>
+      ) : (
+        <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
+          <ResizablePanel defaultSize="25%" minSize="18%" maxSize="55%">
+            {chatPane}
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize="75%" minSize="40%">
+            {previewPane}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      )}
     </div>
   );
 }
@@ -756,40 +789,15 @@ function AssistantMsg({
   return (
     <div className="space-y-2.5">
       <ThoughtBox reasoning={m.reasoning} running={thinking} ms={m.thinkMs} />
-      {m.agents &&
-        AGENTS.map((agent) => {
-          const execution = m.agents?.find((a) => a.id === agent.id);
-          const state = !execution
-            ? "input-streaming"
-            : execution.status === "running"
-              ? "input-available"
-              : execution.status === "done"
-                ? "output-available"
-                : "output-error";
-          return (
-            <Tool key={agent.id} defaultOpen={false} className="mb-2 bg-card">
-              <ToolHeader
-                type="dynamic-tool"
-                toolName={agent.id}
-                title={agent.label}
-                state={state}
-                className="[&_span]:text-[10px]"
-              />
-              <ToolContent className="space-y-2 p-3 text-xs">
-                <p className="text-muted-foreground">
-                  {agent.task}
-                  {execution?.durationMs ? ` · ${(execution.durationMs / 1000).toFixed(1)}ث` : ""}
-                </p>
-                {execution?.output && (
-                  <div dir="auto" className="max-h-64 overflow-auto">
-                    <MessageResponse>{execution.output}</MessageResponse>
-                  </div>
-                )}
-                {execution?.error && <p className="text-destructive">{execution.error}</p>}
-              </ToolContent>
-            </Tool>
-          );
-        })}
+      {m.timeline?.map((t) =>
+        t.kind === "thought" ? (
+          <p key={t.id} dir="auto" className="text-xs leading-relaxed text-muted-foreground">
+            {t.text}
+          </p>
+        ) : (
+          <ToolCallCard key={t.call.id} call={t.call} />
+        ),
+      )}
       {m.text && (
         <div
           dir="auto"
@@ -839,7 +847,7 @@ function AssistantMsg({
             v{m.version}
           </span>
           <span className="flex-1">
-            <span className="block text-xs font-medium">App.tsx</span>
+            <span className="block text-xs font-medium">ملفات المشروع</span>
             <span className="block text-[11px] text-muted-foreground">
               {activeV === m.version ? "معروض الآن" : "اضغط لعرض هذا الإصدار"}
             </span>
@@ -852,6 +860,54 @@ function AssistantMsg({
         </div>
       )}
     </div>
+  );
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  list_files: "استعراض الملفات",
+  read_file: "قراءة",
+  write_file: "كتابة",
+  edit_file: "تعديل",
+  delete_file: "حذف",
+  check_project: "فحص المشروع",
+  finish: "إنهاء",
+};
+
+function ToolCallCard({ call }: { call: ToolCall }) {
+  const state =
+    call.status === "running"
+      ? "input-available"
+      : call.status === "done"
+        ? "output-available"
+        : "output-error";
+  const target = call.args["path"] ?? "";
+  return (
+    <Tool defaultOpen={false} className="mb-0 bg-card">
+      <ToolHeader
+        type="dynamic-tool"
+        toolName={call.name}
+        title={`${TOOL_LABELS[call.name] ?? call.name}${target ? ` · ${target}` : ""}`}
+        state={state}
+        className="[&_span]:text-[10px]"
+      />
+      <ToolContent className="space-y-2 p-3 text-xs">
+        <p className="font-mono text-[10px] text-muted-foreground" dir="ltr">
+          {call.name}({target ? `"${target}"` : ""})
+          {call.durationMs !== undefined ? ` · ${call.durationMs.toFixed(0)}ms` : ""}
+        </p>
+        {call.output && (
+          <pre
+            dir="ltr"
+            className={cn(
+              "max-h-56 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-[10.5px]",
+              call.status === "error" && "text-destructive",
+            )}
+          >
+            {call.output}
+          </pre>
+        )}
+      </ToolContent>
+    </Tool>
   );
 }
 

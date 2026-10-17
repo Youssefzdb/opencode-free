@@ -4,3 +4,4 @@
 - [x] Add tests and verify the complete flow.
 - [x] Multi-file projects: parsing, file tree, linked preview, zip export.
 - [x] Token-protected AI bridge with realtime delivery.
+- [x] Real tool-calling agent loop visible in chat; mobile chat/preview tabs.
