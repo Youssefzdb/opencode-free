@@ -11,6 +11,12 @@ describe("agent tool calls", () => {
     expect(r.calls[1]!.args["path"]).toBe("src/App.tsx");
     expect(r.calls[1]!.body).toBe("export default function App(){return null}");
   });
+  it("accepts a write_file closed with a leaked </rfl:parameter> closer", () => {
+    const r = parseToolCalls('Hi <action name="write_file" path="src/A.tsx">\n<div>x</div>\n</rfl:parameter>');
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0]!.body).toBe("<div>x</div>");
+    expect(r.thought).toBe("Hi");
+  });
   it("blocks finishing while imports are unresolved", () => {
     expect(checkProject({ "src/App.tsx": 'import X from "./X";\nexport default function App(){}' })).toEqual([
       "Unresolved import: src/App.tsx → ./X",
