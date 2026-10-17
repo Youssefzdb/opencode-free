@@ -3,7 +3,7 @@
  * The model emits <tool …> tags; every tag is actually executed against the
  * virtual project file system, and results are fed back until it calls `finish`.
  */
-import { sendChat, type HistoryItem } from "./opencode";
+import { streamChat, type HistoryItem } from "./opencode";
 import {
   ENTRY,
   extractFiles,
@@ -38,25 +38,6 @@ export type LoopEvent =
   | { type: "tool"; call: ToolCall }
   | { type: "files"; files: ProjectFiles }
   | { type: "status"; text: string | null };
-
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(t);
-      reject(new DOMException("Aborted", "AbortError"));
-    });
-  });
-
-/** Reveals real text progressively (~frames over at most `maxMs`). */
-async function reveal(text: string, maxMs: number, signal: AbortSignal, on: (part: string) => void) {
-  const frames = Math.max(1, Math.min(40, Math.ceil(text.length / 40)));
-  const delay = Math.max(16, maxMs / frames);
-  for (let f = 1; f <= frames; f++) {
-    on(text.slice(0, Math.ceil((text.length * f) / frames)));
-    if (f < frames) await sleep(delay, signal);
-  }
-}
 
 export const AGENT_SYSTEM = `You are an autonomous senior React engineer working inside a virtual project file system. You build professional MULTI-FILE React + TypeScript + Tailwind apps (8-25 focused files: src/App.tsx, src/components/*, src/components/ui/*, src/features/* or src/pages/*, src/hooks/*, src/lib/*, src/data/*, src/types.ts).
 
@@ -176,22 +157,45 @@ export async function runAgentLoop(opts: Options): Promise<{
     opts.signal.throwIfAborted();
     const last = convo[convo.length - 1]!;
     opts.onEvent({ type: "status", text: step === 0 ? "يفكّر…" : "يراجع النتائج ويفكّر…" });
-    const res = await sendChat({
+    const reasoningId = uid();
+    // Live calls detected while the answer streams in, in order of appearance.
+    const streamed: Array<{ id: string; name: string; path: string }> = [];
+    let statusCleared = false;
+    const clearStatus = () => {
+      if (!statusCleared) (statusCleared = true), opts.onEvent({ type: "status", text: null });
+    };
+    const res = await streamChat({
       prompt: `${PLAIN_TEXT_PREFIX}\n\n${last.content}`,
       history: convo.slice(0, -1),
-      session: opts.session,
       model: opts.model,
       signal: opts.signal,
       system: AGENT_SYSTEM,
-      stateless: true,
+      onReasoning: (text) => {
+        clearStatus();
+        opts.onEvent({ type: "thought", id: reasoningId, text });
+      },
+      onAnswer: (text) => {
+        clearStatus();
+        const opens = [...text.matchAll(/<(tool|action)\s+name="([\w_]+)"([^>]*)>/g)];
+        opens.forEach((m, i) => {
+          if (m[2] !== "write_file" && m[2] !== "edit_file") return;
+          const path = /path="([^"]*)"/.exec(m[3] ?? "")?.[1] ?? "";
+          if (!streamed[i]) streamed[i] = { id: uid(), name: m[2]!, path };
+          const s = streamed[i]!;
+          const start = m.index! + m[0].length;
+          const close = text.indexOf(`</${m[1]}>`, start);
+          if (close >= 0) return; // complete: executed after the stream finishes
+          opts.onEvent({
+            type: "tool",
+            call: { id: s.id, name: s.name, args: { path }, status: "running", live: text.slice(start).replace(/^\n/, "") },
+          });
+        });
+      },
     });
     opts.signal.throwIfAborted();
+    clearStatus();
     const { thought, calls } = parseToolCalls(res.content || "");
-    opts.onEvent({ type: "status", text: null });
-    if (thought) {
-      const tid = uid();
-      await reveal(thought, 900, opts.signal, (part) => opts.onEvent({ type: "thought", id: tid, text: part }));
-    }
+    if (thought) opts.onEvent({ type: "thought", id: uid(), text: thought });
 
     // Keep the model's own turn in context, but compress large file bodies.
     convo.push({
@@ -215,13 +219,10 @@ export async function runAgentLoop(opts: Options): Promise<{
     const results: string[] = [];
     let finished: string | null = null;
     for (const c of calls) {
-      const call: ToolCall = { id: uid(), name: c.name, args: c.args, status: "running" };
+      const sIdx = streamed.findIndex((s) => s && s.name === c.name && s.path === (c.args["path"] ?? ""));
+      const id = sIdx >= 0 ? streamed.splice(sIdx, 1)[0]!.id : uid();
+      const call: ToolCall = { id, name: c.name, args: c.args, status: "running" };
       opts.onEvent({ type: "tool", call: { ...call } });
-      if ((c.name === "write_file" || c.name === "edit_file") && c.body.trim()) {
-        await reveal(c.body, 1400, opts.signal, (part) =>
-          opts.onEvent({ type: "tool", call: { ...call, live: part } }),
-        );
-      }
       const t0 = performance.now();
       let output = "";
       let ok = true;
