@@ -71,20 +71,47 @@ const PLAIN_TEXT_PREFIX =
   "This is a standalone text answer request. There is NO repository or workspace on your side. DO NOT call any native tools, inspect directories, or write files yourself. Answer directly in your final message with plain-text <action> tags; the host executes them.";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const TAG_RE =
-  /<(tool|action)\s+name="([\w-]+)"((?:\s+[\w-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/g;
+const OPEN_RE = /<(tool|action)\s+name="([\w-]+)"((?:\s+[\w-]+="[^"]*")*)\s*(\/?)>/g;
+/** Closers the model sometimes emits instead of </action> (leaked native-call syntax). */
+const CLOSE_RE = /<\/(?:action|tool|[\w-]+:parameter|parameter|invoke|[\w-]+:invoke|function_calls|[\w-]+:function_calls)>/g;
 
+/**
+ * Lenient parser: a body ends at the proper closer, a leaked foreign closer
+ * (e.g. </rfl:parameter>), the next <action> tag, or the end of the reply.
+ */
 export function parseToolCalls(content: string): {
   thought: string;
   calls: Array<{ name: string; args: Record<string, string>; body: string }>;
 } {
   const calls: Array<{ name: string; args: Record<string, string>; body: string }> = [];
-  for (const m of content.matchAll(TAG_RE)) {
+  const opens = [...content.matchAll(OPEN_RE)];
+  let thought = "";
+  let cursor = 0;
+  for (let i = 0; i < opens.length; i++) {
+    const m = opens[i]!;
+    if (m.index! < cursor) continue;
+    thought += content.slice(cursor, m.index);
     const args: Record<string, string> = {};
     for (const a of (m[3] ?? "").matchAll(/([\w-]+)="([^"]*)"/g)) args[a[1]!] = a[2]!;
-    calls.push({ name: m[2]!, args, body: (m[4] ?? "").replace(/^\n/, "").replace(/\n$/, "") });
+    const start = m.index! + m[0].length;
+    let body = "";
+    let end = start;
+    if (m[4] !== "/") {
+      const nextOpen = opens.slice(i + 1).find((o) => o.index! >= start)?.index ?? content.length;
+      CLOSE_RE.lastIndex = start;
+      const close = CLOSE_RE.exec(content);
+      if (close && close.index < nextOpen) {
+        body = content.slice(start, close.index);
+        end = close.index + close[0].length;
+      } else {
+        body = content.slice(start, nextOpen);
+        end = nextOpen;
+      }
+    }
+    calls.push({ name: m[2]!, args, body: body.replace(/^\n/, "").replace(/\s+$/, "") });
+    cursor = end;
   }
-  let thought = content.replace(TAG_RE, "").trim();
+  thought = (thought + content.slice(cursor)).trim();
   // Fallback: a model that answers with fenced files instead of tags still gets real writes.
   if (!calls.length) {
     const fenced = extractFiles(content);
