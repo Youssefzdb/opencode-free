@@ -145,7 +145,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     : "The project is empty.";
   const convo: HistoryItem[] = [
     ...opts.history,
-    { role: "user", content: `Task: ${opts.prompt}\n\n${listing}\n\nStart working using tools.` },
+    { role: "user", content: `Task: ${opts.prompt}\n\n${listing}\n\nReply now with plain-text action tags.` },
   ];
   const maxSteps = opts.maxSteps ?? 14;
   let nudges = 0;
@@ -272,7 +272,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     }
     if (changed) opts.onEvent({ type: "files", files: { ...files } });
     if (finished !== null) return { files, summary: finished, changed };
-    convo.push({ role: "user", content: `Tool results:\n\n${results.join("\n\n")}\n\nContinue.` });
+    convo.push({ role: "user", content: `Tool results:\n\n${results.join("\n\n")}\n\nContinue: reply with plain-text action tags (finish when done). });
   }
   const problems = checkProject(files);
   if (!changed) throw new Error("لم ينفّذ الوكيل أي تعديل على الملفات؛ أعد المحاولة.");
