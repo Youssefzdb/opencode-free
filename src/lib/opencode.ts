@@ -106,6 +106,8 @@ export async function fetchModels(signal?: AbortSignal): Promise<ModelReport> {
 }
 
 export type ChatResult = {
+  /** True when the stream ended before the done event. */
+  partial?: boolean;
   content: string;
   reasoning?: string;
   usage?: { total_tokens?: number };
@@ -278,13 +280,18 @@ export async function streamChat(opts: {
         }
       }
       const result = done ?? { content: answer, reasoning };
-      if (result.content.trim()) return result;
-      if (received) throw new Error("انقطع البث قبل اكتمال الرد، حاول مرة أخرى.");
+      // A dropped stream still returns the answer delivered so far; the agent
+      // loop executes the complete actions in it and asks the model to continue.
+      if (result.content.trim()) return done ? result : { ...result, partial: true };
+      lastErr = "انقطع البث قبل اكتمال الرد.";
       await wait(1500 * (attempt + 1));
     } catch (e) {
       if (opts.signal?.aborted) throw e;
-      if (received) throw e; // never silently replay a partially delivered answer
+      // Answer text already shown: hand it back instead of replaying it.
+      if (answer.trim()) return { content: answer, reasoning, partial: true };
+      // Only reasoning arrived: nothing was answered yet, so a fresh request is safe.
       lastErr = (e as Error).message || lastErr;
+      if (received) opts.onReasoning?.("");
       await wait(1500 * (attempt + 1));
     }
   }
