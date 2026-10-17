@@ -463,6 +463,7 @@ function Studio() {
               </SelectContent>
             </Select>
           )}
+          <BridgePanel onLoad={loadFromBridge} />
           <IconBtn label="نسخ الكود" onClick={copyCode} disabled={!current}>
             <Copy className="size-4" />
           </IconBtn>
