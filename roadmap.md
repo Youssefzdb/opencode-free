@@ -5,3 +5,5 @@
 - [x] Multi-file projects: parsing, file tree, linked preview, zip export.
 - [x] Token-protected AI bridge with realtime delivery.
 - [x] Real tool-calling agent loop visible in chat; mobile chat/preview tabs.
+- [ ] Per-user GitHub connection and one-click project upload — waiting for workspace OAuth client setup.
+- [x] Provide the GitHub OAuth Redirect URI for initial setup.
