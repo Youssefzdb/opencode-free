@@ -140,30 +140,46 @@ export async function sendChat(opts: {
     reasoning_effort: "medium",
   };
   let body: Record<string, unknown> = sessionsBroken || opts.stateless ? withHistory : withSession;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${OPENCODE_BASE}/opencodeChat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: opts.signal ?? null,
+  const wait = (ms: number) =>
+    new Promise<void>((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      opts.signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      });
     });
+  const MAX = 6;
+  for (let attempt = 0; attempt < MAX; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${OPENCODE_BASE}/opencodeChat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: opts.signal ?? null,
+      });
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      await wait(1500 * (attempt + 1)); // network hiccup: retry
+      continue;
+    }
     const data = await res.json().catch(() => ({}));
     if (res.ok && !data.error && typeof data.content === "string" && data.content.trim())
       return data as ChatResult;
-    if (res.ok) continue; // empty answer: ask again
-    if (!sessionsBroken && /private|access/i.test(String(data.message ?? ""))) {
+    if (!sessionsBroken && /private|access|session/i.test(String(data.message ?? data.error ?? ""))) {
       sessionsBroken = true;
       body = withHistory;
-      attempt--;
       continue;
     }
-    if (res.status === 429 || res.status >= 500) {
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+    if (res.ok || res.status === 429 || res.status >= 500 || res.status === 408) {
+      // Empty answer or temporary failure: after two misses with a session, switch to full history.
+      if (attempt >= 1 && body === withSession) body = withHistory;
+      await wait(1500 * (attempt + 1));
       continue;
     }
     throw new Error(data.error || data.message || `خطأ ${res.status}`);
   }
-  throw new Error("تعذر الحصول على رد من النموذج، حاول مرة أخرى.");
+  throw new Error("تعذر الحصول على رد من النموذج بعد عدة محاولات، حاول مرة أخرى.");
 }
 
 export async function clearSession(session: string) {
