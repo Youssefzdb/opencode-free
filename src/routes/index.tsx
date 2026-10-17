@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
-import { Tool, ToolHeader, ToolContent } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import JSZip from "jszip";
 import {
