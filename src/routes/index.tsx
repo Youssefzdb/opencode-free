@@ -41,13 +41,16 @@ import { cn } from "@/lib/utils";
 import {
   DEFAULT_MODEL,
   clearSession,
-  extractCode,
   fetchModels,
   loadConfirmedModels,
   type ModelInfo,
 } from "@/lib/opencode";
 import { AGENTS, generateWithAgents, type AgentEvent } from "@/lib/agents";
 import { buildPreviewHtml, buildProjectFiles } from "@/lib/preview";
+import { ENTRY, serializeFiles, totalLines, type ProjectFiles } from "@/lib/files";
+import { FileTree } from "@/components/file-tree";
+import { BridgePanel } from "@/components/bridge-panel";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -88,7 +91,7 @@ type Msg = {
   error?: string | undefined;
   agents?: AgentEvent[] | undefined;
 };
-type Version = { n: number; code: string; prompt: string };
+type Version = { n: number; files: ProjectFiles; prompt: string };
 type Device = "desktop" | "tablet" | "mobile";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -117,6 +120,7 @@ function Studio() {
   const [view, setView] = useState<"preview" | "code">("preview");
   const [device, setDevice] = useState<Device>("desktop");
   const [reloadKey, setReloadKey] = useState(0);
+  const [activeFile, setActiveFile] = useState(ENTRY);
   const abortRef = useRef<AbortController | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -141,7 +145,7 @@ function Studio() {
 
   const current = versions.find((v) => v.n === activeV) ?? null;
   const html = useMemo(
-    () => (current ? buildPreviewHtml(current.code, storageRef.current) : ""),
+    () => (current ? buildPreviewHtml(current.files, storageRef.current) : ""),
     // Reload intentionally captures the latest bridged storage without rebuilding on each write.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [current, reloadKey],
@@ -206,6 +210,57 @@ function Studio() {
     return () => window.removeEventListener("message", receive);
   }, [session]);
 
+  const versionsRef = useRef(versions);
+  versionsRef.current = versions;
+  useEffect(() => {
+    const apply = (row: { files?: unknown; revision?: number; message?: string } | null) => {
+      if (!row || !row.files || typeof row.files !== "object") return;
+      const files = row.files as ProjectFiles;
+      if (!files[ENTRY]) return;
+      const n = versionsRef.current.length + 1;
+      setVersions((vs) => [...vs, { n, files, prompt: row.message || `Bridge r${row.revision}` }]);
+      setActiveV(n);
+      setMessages((ms) => [
+        ...ms,
+        {
+          id: uid(),
+          role: "assistant",
+          text: `📡 وصلت ملفات عبر الجسر (مراجعة ${row.revision ?? "?"})${row.message ? `: ${row.message}` : ""}`,
+          version: n,
+        },
+      ]);
+      toast.success("تم استلام مشروع عبر الجسر");
+    };
+    const channel = supabase
+      .channel("bridge-default")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "bridge_projects", filter: "id=eq.default" },
+        (payload) => apply(payload.new as { files?: unknown; revision?: number; message?: string }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  async function loadFromBridge() {
+    const { data, error } = await supabase
+      .from("bridge_projects")
+      .select("files, revision, message")
+      .eq("id", "default")
+      .maybeSingle();
+    if (error || !data) {
+      toast.error("لا يوجد مشروع في الجسر بعد");
+      return;
+    }
+    const files = data.files as ProjectFiles;
+    if (!files?.[ENTRY]) return toast.error("المشروع في الجسر لا يحتوي src/App.tsx");
+    const n = versions.length + 1;
+    setVersions((vs) => [...vs, { n, files, prompt: data.message || `Bridge r${data.revision}` }]);
+    setActiveV(n);
+  }
+
   async function refreshModels() {
     if (checking || busy) return;
     const ctrl = new AbortController();
@@ -259,7 +314,7 @@ function Studio() {
     const t0 = performance.now();
     try {
       const fullPrompt = current
-        ? `${prompt}\n\n(Current App.tsx is version v${current.n}. Return the full updated file.)`
+        ? `${prompt}\n\n(Current project is version v${current.n}. Return only changed or new files, each complete.)`
         : prompt;
       const history = messages
         .filter((m) => m.role === "user" || (!m.error && m.text))
@@ -267,7 +322,7 @@ function Studio() {
           const v = m.version ? versions.find((x) => x.n === m.version) : undefined;
           return {
             role: m.role,
-            content: v ? `${m.text}\n\n\`\`\`tsx\n${v.code}\n\`\`\`` : m.text,
+            content: v ? `${m.text}\n\n(project v${v.n}: ${Object.keys(v.files).length} files)` : m.text,
           };
         })
         .slice(-20);
@@ -276,7 +331,7 @@ function Studio() {
         session,
         model,
         history,
-        currentCode: current?.code,
+        currentFiles: current?.files,
         signal: ctrl.signal,
         onEvent: (event) =>
           patch(aid, (m) => ({
@@ -285,12 +340,13 @@ function Studio() {
           })),
       });
       const thinkMs = performance.now() - t0;
-      const { text: prose, code } = extractCode(res.content || "");
+      const prose = res.text;
+      const files = res.files;
       patch(aid, (m) => ({ ...m, text: prose, reasoning: res.reasoning, thinkMs }));
       setStep(aid, "think", { status: "done", detail: `${(thinkMs / 1000).toFixed(1)}ث` });
-      if (code) {
+      if (files) {
         const n = versions.length + 1;
-        const lines = code.split("\n").length;
+        const lines = totalLines(files);
         patch(aid, (m) => ({
           ...m,
           version: n,
@@ -299,15 +355,15 @@ function Studio() {
             {
               id: "file",
               kind: "file",
-              label: current ? "تحديث App.tsx" : "إنشاء App.tsx",
-              detail: `${lines} سطر`,
+              label: current ? "تحديث ملفات المشروع" : "إنشاء ملفات المشروع",
+              detail: `${Object.keys(files).length} ملف · ${lines} سطر`,
               status: "done",
             },
             { id: "render", kind: "render", label: "تصيير المعاينة الحية", status: "running" },
           ],
         }));
         previewMsgRef.current = aid;
-        setVersions((vs) => [...vs, { n, code, prompt }]);
+        setVersions((vs) => [...vs, { n, files, prompt }]);
         setActiveV(n);
         setView("preview");
       }
@@ -344,14 +400,14 @@ function Studio() {
 
   async function copyCode() {
     if (!current) return;
-    await navigator.clipboard.writeText(current.code);
+    await navigator.clipboard.writeText(current.files[activeFile] ?? serializeFiles(current.files));
     toast.success("تم نسخ الكود");
   }
 
   async function downloadProject() {
     if (!current) return;
     const zip = new JSZip();
-    Object.entries(buildProjectFiles(current.code)).forEach(([p, c]) => zip.file(p, c));
+    Object.entries(buildProjectFiles(current.files)).forEach(([p, c]) => zip.file(p, c));
     const blob = await zip.generateAsync({ type: "blob" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -583,7 +639,12 @@ function Studio() {
                 </>
               ) : (
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <FileCode2 className="size-3.5 text-primary" /> src/App.tsx
+                  <FileCode2 className="size-3.5 text-primary" /> {activeFile}
+                  {current && (
+                    <span className="text-muted-foreground/60">
+                      · {Object.keys(current.files).length} ملف
+                    </span>
+                  )}
                 </div>
               )}
               <span className="ml-auto font-mono text-[11px] text-muted-foreground">
@@ -616,7 +677,18 @@ function Studio() {
                   </div>
                 </div>
               ) : (
-                <CodeView code={current.code} />
+                <div className="flex h-full">
+                  <FileTree
+                    files={current.files}
+                    active={current.files[activeFile] !== undefined ? activeFile : ENTRY}
+                    onSelect={setActiveFile}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <CodeView
+                      code={current.files[activeFile] ?? current.files[ENTRY] ?? ""}
+                    />
+                  </div>
+                </div>
               )}
             </div>
           </div>
