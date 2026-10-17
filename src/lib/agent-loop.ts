@@ -81,9 +81,9 @@ const CLOSE_RE = /<\/(?:action|tool|[\w-]+:parameter|parameter|invoke|[\w-]+:inv
  */
 export function parseToolCalls(content: string): {
   thought: string;
-  calls: Array<{ name: string; args: Record<string, string>; body: string }>;
+  calls: Array<{ name: string; args: Record<string, string>; body: string; unclosed?: boolean }>;
 } {
-  const calls: Array<{ name: string; args: Record<string, string>; body: string }> = [];
+  const calls: Array<{ name: string; args: Record<string, string>; body: string; unclosed?: boolean }> = [];
   const opens = [...content.matchAll(OPEN_RE)];
   let thought = "";
   let cursor = 0;
@@ -96,6 +96,7 @@ export function parseToolCalls(content: string): {
     const start = m.index! + m[0].length;
     let body = "";
     let end = start;
+    let unclosed = false;
     if (m[4] !== "/") {
       const nextOpen = opens.slice(i + 1).find((o) => o.index! >= start)?.index ?? content.length;
       CLOSE_RE.lastIndex = start;
@@ -106,9 +107,10 @@ export function parseToolCalls(content: string): {
       } else {
         body = content.slice(start, nextOpen);
         end = nextOpen;
+        unclosed = nextOpen === content.length;
       }
     }
-    calls.push({ name: m[2]!, args, body: body.replace(/^\n/, "").replace(/\s+$/, "") });
+    calls.push({ name: m[2]!, args, body: body.replace(/^\n/, "").replace(/\s+$/, ""), unclosed });
     cursor = end;
   }
   thought = (thought + content.slice(cursor)).trim();
@@ -221,7 +223,13 @@ export async function runAgentLoop(opts: Options): Promise<{
     });
     opts.signal.throwIfAborted();
     clearStatus();
-    const { thought, calls } = parseToolCalls(res.content || "");
+    const parsed = parseToolCalls(res.content || "");
+    const { thought } = parsed;
+    // A stream cut mid-file must not write a truncated file.
+    const calls = res.partial ? parsed.calls.filter((c) => !c.unclosed) : parsed.calls;
+    const cutNote = res.partial
+      ? "\n\nNote: your previous reply was cut off by the connection; any unfinished action was discarded. Continue from where you stopped."
+      : "";
     if (thought) opts.onEvent({ type: "thought", id: uid(), text: thought });
 
     // Keep the model's own turn in context, but compress large file bodies.
@@ -334,7 +342,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     }
     if (changed) opts.onEvent({ type: "files", files: { ...files } });
     if (finished !== null) return { files, summary: finished, changed };
-    convo.push({ role: "user", content: `Action results:\n\n${results.join("\n\n")}\n\nContinue: reply with plain-text action tags (finish when done).` });
+    convo.push({ role: "user", content: `Action results:\n\n${results.join("\n\n")}${cutNote}\n\nContinue: reply with plain-text action tags (finish when done).` });
   }
   const problems = checkProject(files);
   if (!changed) throw new Error("لم ينفّذ الوكيل أي تعديل على الملفات؛ أعد المحاولة.");
