@@ -182,6 +182,115 @@ export async function sendChat(opts: {
   throw new Error("تعذر الحصول على رد من النموذج بعد عدة محاولات، حاول مرة أخرى.");
 }
 
+/**
+ * Real streaming (SSE): start → reasoning → answer → done.
+ * Callbacks receive the accumulated text so far. Retries only before any token arrived.
+ */
+export async function streamChat(opts: {
+  prompt: string;
+  model: string;
+  history: HistoryItem[];
+  system?: string;
+  signal?: AbortSignal;
+  onReasoning?: (text: string) => void;
+  onAnswer?: (text: string) => void;
+}): Promise<ChatResult> {
+  const body = JSON.stringify({
+    messages: [...opts.history, { role: "user", content: opts.prompt }],
+    model: opts.model,
+    system: opts.system ?? SYSTEM_PROMPT,
+    reasoning_effort: "medium",
+    stream: true,
+  });
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  let lastErr = "تعذر الحصول على رد من النموذج بعد عدة محاولات، حاول مرة أخرى.";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let reasoning = "";
+    let answer = "";
+    let received = false;
+    try {
+      const res = await fetch(`${OPENCODE_BASE}/opencodeChat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body,
+        signal: opts.signal ?? null,
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        lastErr = d.error || d.message || `خطأ ${res.status}`;
+        if (res.status === 429 || res.status >= 500 || res.status === 408) {
+          await wait(1500 * (attempt + 1));
+          continue;
+        }
+        throw new Error(lastErr);
+      }
+      // Non-SSE fallback (older behaviour).
+      if (!(res.headers.get("content-type") ?? "").includes("event-stream")) {
+        const d = await res.json();
+        if (typeof d.content === "string" && d.content.trim()) {
+          opts.onReasoning?.(d.reasoning ?? "");
+          opts.onAnswer?.(d.content);
+          return d as ChatResult;
+        }
+        await wait(1500 * (attempt + 1));
+        continue;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let done: ChatResult | null = null;
+      while (!done) {
+        const { value, done: end } = await reader.read();
+        if (end) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of chunk.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === "[DONE]") continue;
+            let ev: Record<string, unknown>;
+            try {
+              ev = JSON.parse(raw);
+            } catch {
+              continue;
+            }
+            if (ev["type"] === "reasoning" && typeof ev["text"] === "string") {
+              received = true;
+              reasoning += ev["text"];
+              opts.onReasoning?.(reasoning);
+            } else if (ev["type"] === "answer" && typeof ev["text"] === "string") {
+              received = true;
+              answer += ev["text"];
+              opts.onAnswer?.(answer);
+            } else if (ev["type"] === "done") {
+              done = {
+                content: typeof ev["content"] === "string" ? (ev["content"] as string) : answer,
+                reasoning: typeof ev["reasoning"] === "string" ? (ev["reasoning"] as string) : reasoning,
+                model: String(ev["model"] ?? opts.model),
+              };
+            } else if (ev["type"] === "error") {
+              throw new Error(String(ev["message"] ?? ev["error"] ?? "خطأ من النموذج"));
+            }
+          }
+        }
+      }
+      const result = done ?? { content: answer, reasoning };
+      if (result.content.trim()) return result;
+      if (received) throw new Error("انقطع البث قبل اكتمال الرد، حاول مرة أخرى.");
+      await wait(1500 * (attempt + 1));
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      if (received) throw e; // never silently replay a partially delivered answer
+      lastErr = (e as Error).message || lastErr;
+      await wait(1500 * (attempt + 1));
+    }
+  }
+  throw new Error(lastErr);
+}
+
 export async function clearSession(session: string) {
   await fetch(`${OPENCODE_BASE}/opencodeSessions`, {
     method: "POST",
