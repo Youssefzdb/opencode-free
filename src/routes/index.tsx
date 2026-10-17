@@ -255,7 +255,10 @@ function Studio() {
       return;
     }
     const files = data.files as ProjectFiles;
-    if (!files?.[ENTRY]) return toast.error("المشروع في الجسر لا يحتوي src/App.tsx");
+    if (!files?.[ENTRY]) {
+      toast.error("المشروع في الجسر لا يحتوي src/App.tsx");
+      return;
+    }
     const n = versions.length + 1;
     setVersions((vs) => [...vs, { n, files, prompt: data.message || `Bridge r${data.revision}` }]);
     setActiveV(n);
