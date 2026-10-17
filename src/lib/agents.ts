@@ -91,7 +91,7 @@ export async function generateWithAgents(opts: Options): Promise<AgentResult> {
     const result = await sendChat({
       ...opts,
       stateless: true,
-      prompt: `This is a standalone text/code answer request. There is NO repository or workspace. DO NOT call tools, inspect directories, or write files. Return the code directly in your final message.\n\n${context}\n\nSpecialist implementation briefs (advisory):\n${briefs.join("\n\n")}\n\nReturn a professional MULTI-FILE project: one fenced block per file with the path in the info string (```tsx src/components/Navbar.tsx). Split into components, hooks, lib, data and types; src/App.tsx composes them. Every local import must exist. All actions must have real handlers. Tailwind utilities for styling. Answer directly; no tool calls.`,
+      prompt: `This is a standalone text/code answer request. There is NO repository or workspace. DO NOT call tools, inspect directories, or write files. Return the code directly in your final message.\n\n${context}\n\nSpecialist implementation briefs (advisory):\n${briefs.join("\n\n")}\n\nReturn a professional MULTI-FILE project: one fenced block per file with the path in the info string (\`\`\`tsx src/components/Navbar.tsx). Split into components, hooks, lib, data and types; src/App.tsx composes them. Every local import must exist. All actions must have real handlers. Tailwind utilities for styling. Answer directly; no tool calls.`,
     });
     opts.signal.throwIfAborted();
     const parsed = extractFiles(result.content);
