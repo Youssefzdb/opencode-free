@@ -92,6 +92,7 @@ type Msg = {
   error?: string | undefined;
   agents?: AgentEvent[] | undefined;
   timeline?: TimelineItem[] | undefined;
+  live?: string | null | undefined;
 };
 type TimelineItem = { kind: "thought"; id: string; text: string } | { kind: "tool"; call: ToolCall };
 type Version = { n: number; files: ProjectFiles; prompt: string };
@@ -334,10 +335,17 @@ function Studio() {
         signal: ctrl.signal,
         onEvent: (event) => {
           if (event.type === "files") return;
+          if (event.type === "status") {
+            patch(aid, (m) => ({ ...m, live: event.text }));
+            return;
+          }
           patch(aid, (m) => {
             const tl = m.timeline ?? [];
-            if (event.type === "thought")
-              return { ...m, timeline: [...tl, { kind: "thought", id: event.id, text: event.text }] };
+            if (event.type === "thought") {
+              const item: TimelineItem = { kind: "thought", id: event.id, text: event.text };
+              const k = tl.findIndex((t) => t.kind === "thought" && t.id === event.id);
+              return { ...m, timeline: k >= 0 ? tl.map((t, j) => (j === k ? item : t)) : [...tl, item] };
+            }
             const i = tl.findIndex((t) => t.kind === "tool" && t.call.id === event.call.id);
             const item: TimelineItem = { kind: "tool", call: event.call };
             return {
@@ -349,7 +357,7 @@ function Studio() {
       });
       const thinkMs = performance.now() - t0;
       const files = res.changed ? res.files : null;
-      patch(aid, (m) => ({ ...m, text: res.summary, thinkMs }));
+      patch(aid, (m) => ({ ...m, text: res.summary, thinkMs, live: null }));
       setStep(aid, "think", { status: "done", detail: `${(thinkMs / 1000).toFixed(1)}ث` });
       if (files) {
         const n = versions.length + 1;
@@ -380,6 +388,7 @@ function Studio() {
       ctrl.abort();
       patch(aid, (m) => ({
         ...m,
+        live: null,
         error: aborted ? "تم إيقاف التوليد." : (e as Error).message,
         steps: m.steps?.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
         timeline: m.timeline?.map((t) =>
@@ -797,6 +806,7 @@ function AssistantMsg({
           <ToolCallCard key={t.call.id} call={t.call} />
         ),
       )}
+      {m.live && <LiveStatus text={m.live} />}
       {m.text && (
         <div
           dir="auto"
@@ -872,8 +882,56 @@ const TOOL_LABELS: Record<string, string> = {
   finish: "إنهاء",
 };
 
+function LiveStatus({ text }: { text: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const i = setInterval(() => setElapsed((Date.now() - t0) / 1000), 100);
+    return () => clearInterval(i);
+  }, [text]);
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <Loader2 className="size-3 animate-spin text-primary" />
+      <span className="animate-pulse">{text}</span>
+      <span className="font-mono text-[10px]">{elapsed.toFixed(1)}ث</span>
+    </div>
+  );
+}
+
+function LiveCode({ code }: { code: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [code]);
+  return (
+    <pre
+      ref={ref}
+      dir="ltr"
+      className="mt-1 max-h-40 overflow-hidden whitespace-pre-wrap border-s-2 border-primary/40 ps-3 font-mono text-[10.5px] leading-snug text-muted-foreground"
+    >
+      {code}
+      <span className="animate-pulse text-primary">▍</span>
+    </pre>
+  );
+}
+
 function ToolCallCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
+  if (call.status === "running" && call.live !== undefined) {
+    const verb = call.name === "edit_file" ? "يعدّل" : "يكتب";
+    return (
+      <div>
+        <div className="flex items-center gap-2 text-xs text-foreground">
+          <Loader2 className="size-3 shrink-0 animate-spin text-primary" />
+          <span className="font-medium">{verb}</span>
+          <span className="truncate font-mono text-[10.5px]" dir="ltr">
+            {call.args["path"] ?? ""}
+          </span>
+        </div>
+        <LiveCode code={call.live} />
+      </div>
+    );
+  }
   const target = call.args["path"] ?? "";
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
