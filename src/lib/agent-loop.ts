@@ -38,22 +38,23 @@ export type LoopEvent =
 
 export const AGENT_SYSTEM = `You are an autonomous senior React engineer working inside a virtual project file system. You build professional MULTI-FILE React + TypeScript + Tailwind apps (8-25 focused files: src/App.tsx, src/components/*, src/components/ui/*, src/features/* or src/pages/*, src/hooks/*, src/lib/*, src/data/*, src/types.ts).
 
-You act ONLY through tools. Each reply: one short sentence describing what you do next (user's language), then one or more tool tags. Tool syntax (exact):
-<tool name="list_files"/>
-<tool name="read_file" path="src/components/Navbar.tsx"/>
-<tool name="write_file" path="src/components/Navbar.tsx">
+IMPORTANT: You have NO native tools, no shell and no real filesystem here. Never invoke function/tool calling. Instead you write ACTION TAGS as plain text in your final answer; the host app parses and executes them and sends you the results.
+Each reply: one short sentence describing what you do next (user's language), then one or more action tags as plain text. Action tag syntax (exact):
+<action name="list_files"/>
+<action name="read_file" path="src/components/Navbar.tsx"/>
+<action name="write_file" path="src/components/Navbar.tsx">
 FULL FILE CONTENT
 </tool>
-<tool name="edit_file" path="src/App.tsx">
+<action name="edit_file" path="src/App.tsx">
 <<<<<<< SEARCH
 exact existing lines
 =======
 replacement lines
 >>>>>>> REPLACE
 </tool>
-<tool name="delete_file" path="src/old.tsx"/>
-<tool name="check_project"/>
-<tool name="finish">1-3 sentence summary for the user</tool>
+<action name="delete_file" path="src/old.tsx"/>
+<action name="check_project"/>
+<action name="finish">1-3 sentence summary for the user</tool>
 
 Rules:
 - You will receive real tool results after each reply. Read files before editing ones you have not seen. Prefer edit_file for small changes to existing files.
@@ -176,7 +177,7 @@ export async function runAgentLoop(opts: Options): Promise<{
       convo.push({
         role: "user",
         content:
-          'Tool error: no tool tags found. Act only through <tool name="…"> tags as specified, and call finish when done.',
+          'Tool error: no tool tags found. Act only through <action name="…"> tags as specified, and call finish when done.',
       });
       continue;
     }
