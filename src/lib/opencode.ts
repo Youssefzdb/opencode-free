@@ -269,7 +269,7 @@ export async function streamChat(opts: {
               done = {
                 content: typeof ev["content"] === "string" ? (ev["content"] as string) : answer,
                 reasoning: typeof ev["reasoning"] === "string" ? (ev["reasoning"] as string) : reasoning,
-                model: ev["model"] as string | undefined,
+                model: String(ev["model"] ?? opts.model),
               };
             } else if (ev["type"] === "error") {
               throw new Error(String(ev["message"] ?? ev["error"] ?? "خطأ من النموذج"));
