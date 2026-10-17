@@ -64,6 +64,9 @@ Rules:
 - Respect the user's language and RTL when appropriate; responsive mobile layout; accessible labels.
 - Before finish, call check_project and fix every reported problem. Never claim work you did not do through tools.`;
 
+const PLAIN_TEXT_PREFIX =
+  "This is a standalone text answer request. There is NO repository or workspace on your side. DO NOT call any native tools, inspect directories, or write files yourself. Answer directly in your final message with plain-text <action> tags; the host executes them.";
+
 const uid = () => Math.random().toString(36).slice(2, 10);
 const TAG_RE =
   /<(tool|action)\s+name="([\w-]+)"((?:\s+[\w-]+="[^"]*")*)\s*(?:\/>|>([\s\S]*?)<\/\1>)/g;
@@ -151,7 +154,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     opts.signal.throwIfAborted();
     const last = convo[convo.length - 1]!;
     const res = await sendChat({
-      prompt: last.content,
+      prompt: `${PLAIN_TEXT_PREFIX}\n\n${last.content}`,
       history: convo.slice(0, -1),
       session: opts.session,
       model: opts.model,
