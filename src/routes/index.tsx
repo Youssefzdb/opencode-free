@@ -388,6 +388,7 @@ function Studio() {
       ctrl.abort();
       patch(aid, (m) => ({
         ...m,
+        live: null,
         error: aborted ? "تم إيقاف التوليد." : (e as Error).message,
         steps: m.steps?.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
         timeline: m.timeline?.map((t) =>
