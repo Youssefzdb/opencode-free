@@ -29,12 +29,34 @@ export type ToolCall = {
   status: "running" | "done" | "error";
   output?: string;
   durationMs?: number;
+  /** Content being written right now (revealed progressively while running). */
+  live?: string;
 };
 
 export type LoopEvent =
   | { type: "thought"; id: string; text: string }
   | { type: "tool"; call: ToolCall }
-  | { type: "files"; files: ProjectFiles };
+  | { type: "files"; files: ProjectFiles }
+  | { type: "status"; text: string | null };
+
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(t);
+      reject(new DOMException("Aborted", "AbortError"));
+    });
+  });
+
+/** Reveals real text progressively (~frames over at most `maxMs`). */
+async function reveal(text: string, maxMs: number, signal: AbortSignal, on: (part: string) => void) {
+  const frames = Math.max(1, Math.min(40, Math.ceil(text.length / 40)));
+  const delay = Math.max(16, maxMs / frames);
+  for (let f = 1; f <= frames; f++) {
+    on(text.slice(0, Math.ceil((text.length * f) / frames)));
+    if (f < frames) await sleep(delay, signal);
+  }
+}
 
 export const AGENT_SYSTEM = `You are an autonomous senior React engineer working inside a virtual project file system. You build professional MULTI-FILE React + TypeScript + Tailwind apps (8-25 focused files: src/App.tsx, src/components/*, src/components/ui/*, src/features/* or src/pages/*, src/hooks/*, src/lib/*, src/data/*, src/types.ts).
 
@@ -153,6 +175,7 @@ export async function runAgentLoop(opts: Options): Promise<{
   for (let step = 0; step < maxSteps; step++) {
     opts.signal.throwIfAborted();
     const last = convo[convo.length - 1]!;
+    opts.onEvent({ type: "status", text: step === 0 ? "يفكّر…" : "يراجع النتائج ويفكّر…" });
     const res = await sendChat({
       prompt: `${PLAIN_TEXT_PREFIX}\n\n${last.content}`,
       history: convo.slice(0, -1),
@@ -164,7 +187,11 @@ export async function runAgentLoop(opts: Options): Promise<{
     });
     opts.signal.throwIfAborted();
     const { thought, calls } = parseToolCalls(res.content || "");
-    if (thought) opts.onEvent({ type: "thought", id: uid(), text: thought });
+    opts.onEvent({ type: "status", text: null });
+    if (thought) {
+      const tid = uid();
+      await reveal(thought, 900, opts.signal, (part) => opts.onEvent({ type: "thought", id: tid, text: part }));
+    }
 
     // Keep the model's own turn in context, but compress large file bodies.
     convo.push({
@@ -190,6 +217,11 @@ export async function runAgentLoop(opts: Options): Promise<{
     for (const c of calls) {
       const call: ToolCall = { id: uid(), name: c.name, args: c.args, status: "running" };
       opts.onEvent({ type: "tool", call: { ...call } });
+      if ((c.name === "write_file" || c.name === "edit_file") && c.body.trim()) {
+        await reveal(c.body, 1400, opts.signal, (part) =>
+          opts.onEvent({ type: "tool", call: { ...call, live: part } }),
+        );
+      }
       const t0 = performance.now();
       let output = "";
       let ok = true;
@@ -268,6 +300,8 @@ export async function runAgentLoop(opts: Options): Promise<{
         durationMs: performance.now() - t0,
       };
       opts.onEvent({ type: "tool", call: done });
+      if (ok && (c.name === "write_file" || c.name === "edit_file" || c.name === "delete_file"))
+        opts.onEvent({ type: "files", files: { ...files } });
       results.push(`[${c.name}${c.args["path"] ? ` ${c.args["path"]}` : ""}] ${ok ? "ok" : "error"}\n${output}`);
     }
     if (changed) opts.onEvent({ type: "files", files: { ...files } });

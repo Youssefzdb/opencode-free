@@ -334,10 +334,17 @@ function Studio() {
         signal: ctrl.signal,
         onEvent: (event) => {
           if (event.type === "files") return;
+          if (event.type === "status") {
+            patch(aid, (m) => ({ ...m, live: event.text }));
+            return;
+          }
           patch(aid, (m) => {
             const tl = m.timeline ?? [];
-            if (event.type === "thought")
-              return { ...m, timeline: [...tl, { kind: "thought", id: event.id, text: event.text }] };
+            if (event.type === "thought") {
+              const item: TimelineItem = { kind: "thought", id: event.id, text: event.text };
+              const k = tl.findIndex((t) => t.kind === "thought" && t.id === event.id);
+              return { ...m, timeline: k >= 0 ? tl.map((t, j) => (j === k ? item : t)) : [...tl, item] };
+            }
             const i = tl.findIndex((t) => t.kind === "tool" && t.call.id === event.call.id);
             const item: TimelineItem = { kind: "tool", call: event.call };
             return {
@@ -797,6 +804,7 @@ function AssistantMsg({
           <ToolCallCard key={t.call.id} call={t.call} />
         ),
       )}
+      {m.live && <LiveStatus text={m.live} />}
       {m.text && (
         <div
           dir="auto"
