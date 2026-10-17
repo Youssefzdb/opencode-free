@@ -107,6 +107,9 @@ Object.defineProperty(window,'localStorage',{value:__storage});
 function __showErr(e){var message=String(e&&e.message||e);var el=document.getElementById('__err');el.style.display='block';el.textContent='⚠ '+message;parent.postMessage({type:'vibe-preview-error',message:message},'*');}
 window.addEventListener('error',function(e){__showErr(e.error||e.message)});
 window.addEventListener('unhandledrejection',function(e){__showErr(e.reason)});
+// Keep navigation inside the generated app: srcdoc links would otherwise load the host studio in the frame.
+document.addEventListener('click',function(e){if(e.defaultPrevented)return;var a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a)return;var h=a.getAttribute('href')||'';e.preventDefault();if(h.charAt(0)==='#'){if(h.length>1){var t=document.getElementById(decodeURIComponent(h.slice(1)));if(t)t.scrollIntoView({behavior:'smooth'})}else window.scrollTo({top:0,behavior:'smooth'});return}if(/^(https?:|mailto:|tel:)/i.test(h))window.open(h,'_blank','noopener');});
+document.addEventListener('submit',function(e){if(!e.defaultPrevented)e.preventDefault();});
 try{(${runtime.toString()})(${safe(files)},${safe(files[ENTRY] ? ENTRY : Object.keys(files)[0])});}catch(e){__showErr(e)}
 </script></body></html>`;
 }
