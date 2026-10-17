@@ -14,7 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      bridge_projects: {
+        Row: {
+          files: Json
+          id: string
+          message: string
+          revision: number
+          updated_at: string
+        }
+        Insert: {
+          files?: Json
+          id: string
+          message?: string
+          revision?: number
+          updated_at?: string
+        }
+        Update: {
+          files?: Json
+          id?: string
+          message?: string
+          revision?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
