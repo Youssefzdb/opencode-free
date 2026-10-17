@@ -210,8 +210,8 @@ export async function runAgentLoop(opts: Options): Promise<{
           if (!streamed[i]) streamed[i] = { id: uid(), name: m[2]!, path };
           const s = streamed[i]!;
           const start = m.index! + m[0].length;
-          const close = text.indexOf(`</${m[1]}>`, start);
-          if (close >= 0) return; // complete: executed after the stream finishes
+          const rest = text.slice(start);
+          if (/<\/(?:action|tool|[\w-]+:parameter|parameter)>/.test(rest)) return; // complete: executed after the stream finishes
           opts.onEvent({
             type: "tool",
             call: { id: s.id, name: s.name, args: { path }, status: "running", live: text.slice(start).replace(/^\n/, "") },
@@ -228,7 +228,7 @@ export async function runAgentLoop(opts: Options): Promise<{
     convo.push({
       role: "assistant",
       content: (res.content || "").replace(
-        /(<(?:tool|action)\s+name="write_file"[^>]*>)([\s\S]*?)(<\/(?:tool|action)>)/g,
+        /(<(?:tool|action)\s+name="write_file"[^>]*>)([\s\S]*?)(<\/(?:tool|action|[\w-]+:parameter|parameter)>)/g,
         (_m, a: string, body: string, c: string) => `${a}[${body.split("\n").length} lines written]${c}`,
       ),
     });
