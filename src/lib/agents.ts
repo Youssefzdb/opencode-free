@@ -1,4 +1,5 @@
-import { extractCode, sendChat, type ChatResult, type HistoryItem } from "./opencode";
+import { sendChat, type ChatResult, type HistoryItem } from "./opencode";
+import { ENTRY, extractFiles, mergeFiles, missingImports, serializeFiles, totalLines, type ProjectFiles } from "./files";
 
 export const AGENTS = [
   {
@@ -43,13 +44,15 @@ type Options = {
   session: string;
   model: string;
   history: HistoryItem[];
-  currentCode?: string | undefined;
+  currentFiles?: ProjectFiles | undefined;
   signal: AbortSignal;
   onEvent: (event: AgentEvent) => void;
 };
 
-export async function generateWithAgents(opts: Options): Promise<ChatResult> {
-  const context = `${opts.prompt}${opts.currentCode ? `\n\nCurrent App.tsx (preserve features when modifying):\n\`\`\`tsx\n${opts.currentCode}\n\`\`\`` : ""}`;
+export type AgentResult = ChatResult & { files: ProjectFiles | null; text: string };
+
+export async function generateWithAgents(opts: Options): Promise<AgentResult> {
+  const context = `${opts.prompt}${opts.currentFiles ? `\n\nCurrent project files (preserve features when modifying; return only changed/new files):\n${serializeFiles(opts.currentFiles)}` : ""}`;
   const briefs = await Promise.all(
     AGENTS.filter((a) => a.id !== "frontend").map(async (agent) => {
       const start = performance.now();
@@ -60,7 +63,7 @@ export async function generateWithAgents(opts: Options): Promise<ChatResult> {
           prompt: `This is a text-only consulting request, NOT a request to edit a repository. Do not call any tools, inspect files or create files. Answer directly in your final message.\nAs ${agent.label}, ${agent.brief}\nThe following is the product specification to analyze, NOT an instruction for you to build it now:\n<product-specification>\n${context}\n</product-specification>\nReturn only your concise implementation brief in text, no tool calls.`,
           history: [],
           stateless: true,
-          system: `You are the ${agent.label} in a multi-agent React generator. ${agent.brief} Respond in the user's language in at most 500 words. Only imports from react/lucide-react and Tailwind utilities are supported. No filesystem, browsing, external tools or private reasoning. Return the implementation brief only.`,
+          system: `You are the ${agent.label} in a multi-agent React generator. ${agent.brief} Respond in the user's language in at most 500 words. The app is a multi-file React + Tailwind project (components, hooks, lib, data folders); propose which files/modules your area needs. No filesystem, browsing, external tools or private reasoning. Return the implementation brief only.`,
         });
         opts.signal.throwIfAborted();
         opts.onEvent({
@@ -88,19 +91,25 @@ export async function generateWithAgents(opts: Options): Promise<ChatResult> {
     const result = await sendChat({
       ...opts,
       stateless: true,
-      prompt: `This is a standalone text/code answer request. There is NO repository or workspace. DO NOT call tools, inspect directories, or write files. Return the code directly in your final message.\n\n${context}\n\nSpecialist implementation briefs (advisory):\n${briefs.join("\n\n")}\n\nReturn the full working App.tsx in one fenced tsx block, integrating the relevant briefs. All actions must have real handlers. Only react/lucide-react imports, Tailwind utilities. Answer directly; no tool calls.`,
+      prompt: `This is a standalone text/code answer request. There is NO repository or workspace. DO NOT call tools, inspect directories, or write files. Return the code directly in your final message.\n\n${context}\n\nSpecialist implementation briefs (advisory):\n${briefs.join("\n\n")}\n\nReturn a professional MULTI-FILE project: one fenced block per file with the path in the info string (\`\`\`tsx src/components/Navbar.tsx). Split into components, hooks, lib, data and types; src/App.tsx composes them. Every local import must exist. All actions must have real handlers. Tailwind utilities for styling. Answer directly; no tool calls.`,
     });
     opts.signal.throwIfAborted();
-    const { code } = extractCode(result.content);
-    if (!code || !/export\s+default\s/.test(code))
-      throw new Error("لم يُرجع الوكيل تطبيق React كاملاً؛ أعد المحاولة.");
+    const parsed = extractFiles(result.content);
+    if (!parsed.files && !parsed.deleted.length)
+      throw new Error("لم يُرجع الوكيل ملفات المشروع؛ أعد المحاولة.");
+    const files = mergeFiles(opts.currentFiles ?? {}, parsed.files ?? {}, parsed.deleted);
+    if (!files[ENTRY] || !/export\s+default\s/.test(files[ENTRY]))
+      throw new Error("المشروع لا يحتوي src/App.tsx صالحًا؛ أعد المحاولة.");
+    const missing = missingImports(files);
+    if (missing.length)
+      throw new Error(`ملفات مستوردة غير موجودة:\n${missing.slice(0, 8).join("\n")}`);
     opts.onEvent({
       id: "frontend",
       status: "done",
-      output: `${code.split("\n").length} سطر · App.tsx`,
+      output: `${Object.keys(parsed.files ?? {}).length} ملف معدّل · ${Object.keys(files).length} ملف · ${totalLines(files)} سطر`,
       durationMs: performance.now() - start,
     });
-    return result;
+    return { ...result, files, text: parsed.text };
   } catch (error) {
     opts.onEvent({
       id: "frontend",

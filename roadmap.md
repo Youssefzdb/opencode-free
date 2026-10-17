@@ -2,3 +2,5 @@
 - [x] Execute design, data, media, and frontend agents with visible real statuses.
 - [x] Support safe localStorage in sandbox and verify interactive generation.
 - [x] Add tests and verify the complete flow.
+- [x] Multi-file projects: parsing, file tree, linked preview, zip export.
+- [x] Token-protected AI bridge with realtime delivery.
